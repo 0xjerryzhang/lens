@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LENS OS | Film Camera</title>
+    
+    <!-- 1. Tailwind CSS (UI 樣式) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Lucide Icons (圖標庫) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- 配置字體與動畫 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
+                    },
+                    keyframes: {
+                        slideUp: { '0%': { transform: 'translateY(20px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } }
+                    },
+                    animation: { slideUp: 'slideUp 0.3s ease-out' }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { background-color: #000; color: white; overflow: hidden; user-select: none; -webkit-user-select: none; }
+        
+        /* 隱藏滾動條但保留功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* 自定義滑塊樣式 */
+        input[type=range] { -webkit-appearance: none; background: transparent; width: 100%; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: white; margin-top: -6px; box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: rgba(255,255,255,0.2); border-radius: 2px;
+        }
+        
+        /* 膠片顆粒 SVG 圖案 (Base64) */
+        .grain-overlay {
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            mix-blend-mode: overlay;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen w-full items-center justify-center bg-black">
+
+    <!-- 背景氛圍圖 -->
+    <div id="bg-layer" class="absolute inset-0 z-0 opacity-30 blur-3xl scale-125 transition-opacity duration-700 pointer-events-none"></div>
+    <div class="absolute inset-0 bg-black/50 z-0 pointer-events-none"></div>
+
+    <!-- 主容器 -->
+    <div class="relative z-10 w-full max-w-md h-full max-h-[900px] flex flex-col bg-neutral-900/60 backdrop-blur-xl border-x border-white/10 shadow-2xl">
+        
+        <!-- 頂部 Header -->
+        <header class="px-6 py-4 flex justify-between items-end border-b border-white/5 bg-gradient-to-b from-black/60 to-transparent">
+            <div>
+                <div class="text-[10px] text-orange-500 tracking-[0.3em] font-bold mb-1">LENS OS</div>
+                <div id="filter-name-display" class="text-xl font-bold tracking-wider font-mono text-white">STANDARD</div>
+            </div>
+            <div class="text-right flex gap-4 text-[10px] font-mono text-neutral-400">
+                <div class="flex flex-col items-center">
+                    <span class="flex items-center gap-1"><i data-lucide="zap" size="10"></i> ISO</span>
+                    <span id="iso-display" class="text-white text-xs">400</span>
+                </div>
+                <div class="flex flex-col items-center">
+                    <span>EV</span>
+                    <span id="ev-display" class="text-white text-xs">0.0</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- 取景器區域 -->
+        <div class="flex-1 relative flex items-center justify-center p-4 overflow-hidden bg-black/20 group">
+            <div class="relative w-full aspect-[3/4] shadow-2xl ring-1 ring-white/10 bg-black transition-all duration-300 overflow-hidden">
+                
+                <!-- 圖片顯示 -->
+                <img id="main-image" class="w-full h-full object-contain hidden transition-all duration-200" />
+                
+                <!-- 空狀態：上傳按鈕 -->
+                <div id="upload-prompt" class="absolute inset-0 flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-colors" onclick="triggerUpload()">
+                    <i data-lucide="upload" size="48" class="text-neutral-600 mb-4"></i>
+                    <span class="text-xs tracking-[0.2em] text-neutral-500">TAP TO LOAD</span>
+                </div>
+
+                <!-- 特效層 -->
+                <div id="grain-layer" class="grain-overlay absolute inset-0 opacity-0 transition-opacity duration-300"></div>
+                <div id="vignette-layer" class="absolute inset-0 pointer-events-none transition-all duration-300"></div>
+
+                <!-- 懸浮按鈕 -->
+                <div id="floating-actions" class="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-4 hidden">
+                    <button onclick="toggleParams()" class="w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center border border-white/20 bg-black/30 text-white hover:bg-black/60 active:scale-95 transition-all">
+                        <i data-lucide="sliders-horizontal" size="18"></i>
+                    </button>
+                    <button onclick="exportImage()" class="w-10 h-10 rounded-full bg-black/30 backdrop-blur-md border border-white/20 flex items-center justify-center text-white hover:bg-white hover:text-black active:scale-95 transition-all">
+                        <i data-lucide="download" size="18"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部控制器 -->
+        <footer class="relative z-20 bg-neutral-900/90 backdrop-blur-xl border-t border-white/10">
+            
+            <!-- 面板 1: 參數調節 (預設隱藏) -->
+            <div id="params-panel" class="h-56 px-6 py-4 hidden animate-slideUp">
+                <div class="flex justify-between items-center mb-4">
+                    <span class="text-xs font-bold text-orange-500 tracking-widest">MANUAL</span>
+                    <button onclick="toggleParams()" class="text-neutral-400 hover:text-white"><i data-lucide="x" size="16"></i></button>
+                </div>
+                
+                <div class="grid gap-5 overflow-y-auto max-h-[160px] pr-2">
+                    <!-- ISO -->
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[10px] font-mono text-neutral-400">
+                            <span>ISO (GRAIN)</span><span id="val-iso">400</span>
+                        </div>
+                        <input type="range" id="input-iso" min="100" max="3200" step="100" value="400" oninput="updateState('iso', this.value)">
+                    </div>
+                    <!-- Exposure -->
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[10px] font-mono text-neutral-400">
+                            <span>EXPOSURE</span><span id="val-exp">0.0</span>
+                        </div>
+                        <input type="range" id="input-exp" min="-2.0" max="2.0" step="0.1" value="0" oninput="updateState('exp', this.value)">
+                    </div>
+                    <!-- Vignette -->
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[10px] font-mono text-neutral-400">
+                            <span>VIGNETTE</span><span id="val-vig">0</span>
+                        </div>
+                        <input type="range" id="input-vig" min="0" max="100" value="0" oninput="updateState('vig', this.value)">
+                    </div>
+                     <!-- Contrast -->
+                     <div class="space-y-1">
+                        <div class="flex justify-between text-[10px] font-mono text-neutral-400">
+                            <span>CONTRAST</span><span id="val-con">0</span>
+                        </div>
+                        <input type="range" id="input-con" min="-30" max="30" value="0" oninput="updateState('con', this.value)">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 面板 2: 濾鏡轉盤 (預設顯示) -->
+            <div id="filters-panel" class="h-56 flex flex-col">
+                <div class="flex-1 relative flex items-center">
+                    <div class="absolute left-1/2 top-0 bottom-0 w-[1px] bg-orange-500 z-30 opacity-50"></div>
+                    <div class="absolute left-0 w-16 h-full bg-gradient-to-r from-neutral-900 to-transparent z-20 pointer-events-none"></div>
+                    <div class="absolute right-0 w-16 h-full bg-gradient-to-l from-neutral-900 to-transparent z-20 pointer-events-none"></div>
+                    
+                    <!-- 滾動容器 -->
+                    <div id="filter-scroll-container" class="w-full overflow-x-auto flex items-center px-[50%] no-scrollbar snap-x snap-mandatory py-8 gap-10">
+                        <!-- JS 將在此處生成濾鏡按鈕 -->
+                    </div>
+                </div>
+                <div class="h-14 border-t border-white/5 flex justify-between items-center px-8 bg-black/40">
+                    <button onclick="triggerUpload()" class="text-neutral-400 hover:text-white transition-colors"><i data-lucide="image" size="20"></i></button>
+                    <div class="flex gap-1 opacity-50"><div class="w-1 h-1 bg-neutral-600 rounded-full"></div><div class="w-1 h-1 bg-neutral-600 rounded-full"></div></div>
+                    <button onclick="resetAll()" class="text-neutral-400 hover:text-white transition-colors"><i data-lucide="rotate-ccw" size="20"></i></button>
+                </div>
+            </div>
+        </footer>
+
+        <!-- 隱藏的文件輸入框 -->
+        <input type="file" id="file-input" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+    </div>
+
+    <!-- 邏輯腳本 -->
+    <script>
+        // --- 1. 數據定義 ---
+        const FILTERS = [
+            { id: 'std', name: 'STANDARD', brand: 'RAW', style: { con: 100, sat: 100, bri: 100, sep: 0, hue: 0, gry: 0 } },
+            { id: 'hassel', name: 'HASSELBLAD', brand: 'HASSELBLAD', style: { con: 105, sat: 110, bri: 105, sep: 0, hue: 0, gry: 0 } },
+            { id: 'ricoh-gr', name: 'RICOH GR', brand: 'RICOH', style: { con: 150, sat: 0, bri: 110, sep: 0, hue: 0, gry: 100 } },
+            { id: 'ricoh-pos', name: 'POS FILM', brand: 'RICOH', style: { con: 120, sat: 140, bri: 100, sep: 10, hue: -5, gry: 0 } },
+            { id: 'fuji-nc', name: 'CLASSIC NEG', brand: 'FUJIFILM', style: { con: 115, sat: 85, bri: 95, sep: 15, hue: -10, gry: 0 } },
+            { id: 'leica-m', name: 'LEICA MONO', brand: 'LEICA', style: { con: 130, sat: 0, bri: 100, sep: 0, hue: 0, gry: 100 } },
+            { id: 'portra', name: 'PORTRA 400', brand: 'KODAK', style: { con: 100, sat: 110, bri: 105, sep: 20, hue: 0, gry: 0 } },
+            { id: 'cine', name: 'CINEMATIC', brand: 'TEAL & ORANGE', style: { con: 120, sat: 120, bri: 100, sep: 0, hue: 10, gry: 0 } },
+        ];
+
+        // --- 2. 狀態管理 ---
+        let state = {
+            image: null,
+            filterIndex: 0,
+            iso: 400,
+            exp: 0,
+            vig: 0,
+            con: 0
+        };
+
+        // --- 3. 初始化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons(); // 加載圖標
+            renderFilterButtons();
+            updateView();
+        });
+
+        // --- 4. 核心功能函數 ---
+
+        function renderFilterButtons() {
+            const container = document.getElementById('filter-scroll-container');
+            container.innerHTML = FILTERS.map((f, i) => `
+                <button onclick="setFilter(${i})" class="snap-center shrink-0 flex flex-col items-center justify-center transition-all duration-300 group outline-none" id="filter-btn-${i}">
+                    <span class="text-lg font-bold font-mono whitespace-nowrap text-neutral-500 group-hover:text-white transition-colors" id="filter-txt-${i}">${f.name}</span>
+                    <span class="text-[9px] text-orange-500 tracking-wider mt-1 opacity-0 transition-opacity" id="filter-sub-${i}">${f.brand}</span>
+                </button>
+            `).join('');
+            
+            // 設置初始激活狀態
+            updateFilterHighlight();
+        }
+
+        function setFilter(index) {
+            state.filterIndex = index;
+            updateFilterHighlight();
+            updateView();
+            
+            // 滾動居中
+            const btn = document.getElementById(`filter-btn-${index}`);
+            btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+
+        function updateFilterHighlight() {
+            FILTERS.forEach((_, i) => {
+                const isActive = i === state.filterIndex;
+                const txt = document.getElementById(`filter-txt-${i}`);
+                const sub = document.getElementById(`filter-sub-${i}`);
+                const btn = document.getElementById(`filter-btn-${i}`);
+                
+                txt.className = `text-lg font-bold font-mono whitespace-nowrap transition-all ${isActive ? 'text-white scale-110' : 'text-neutral-600 scale-90'}`;
+                sub.style.opacity = isActive ? '1' : '0';
+            });
+            document.getElementById('filter-name-display').innerText = FILTERS[state.filterIndex].name;
+        }
+
+        function triggerUpload() {
+            document.getElementById('file-input').click();
+        }
+
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    state.image = e.target.result;
+                    const img = document.getElementById('main-image');
+                    const bg = document.getElementById('bg-layer');
+                    
+                    img.src = state.image;
+                    bg.style.backgroundImage = `url(${state.image})`;
+                    
+                    document.getElementById('upload-prompt').classList.add('hidden');
+                    img.classList.remove('hidden');
+                    document.getElementById('floating-actions').classList.remove('hidden');
+                    updateView();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function updateState(key, value) {
+            state[key] = parseFloat(value);
+            // 更新數值顯示
+            const displayMap = {
+                'iso': 'iso-display',
+                'exp': 'ev-display',
+                'iso': 'val-iso',
+                'exp': 'val-exp',
+                'vig': 'val-vig',
+                'con': 'val-con'
+            };
+            
+            // 特殊處理顯示格式
+            if (key === 'exp') {
+                const val = state.exp > 0 ? `+${state.exp}` : state.exp;
+                document.getElementById('ev-display').innerText = val;
+                document.getElementById('val-exp').innerText = val;
+            } else if (key === 'iso') {
+                document.getElementById('iso-display').innerText = state.iso;
+                document.getElementById('val-iso').innerText = state.iso;
+            } else {
+                document.getElementById(`val-${key}`).innerText = state[key];
+            }
+            
+            updateView();
+        }
+
+        // --- 核心渲染引擎 ---
+        function updateView() {
+            const f = FILTERS[state.filterIndex].style;
+            const img = document.getElementById('main-image');
+            
+            if (!state.image) return;
+
+            // 1. 計算濾鏡參數
+            const isoGain = Math.log2(state.iso / 400) * 5; // ISO 增益
+            const expGain = state.exp * 10;
+            
+            const finalBri = f.bri + isoGain + expGain;
+            const finalCon = f.con + state.con;
+            
+            // 2. 應用 CSS 濾鏡
+            const filterStr = `brightness(${finalBri}%) contrast(${finalCon}%) saturate(${f.sat}%) sepia(${f.sep}%) grayscale(${f.gry}%) hue-rotate(${f.hue}deg)`;
+            img.style.filter = filterStr;
+
+            // 3. 應用顆粒 (Grain)
+            const grainOpacity = Math.min(0.05 + (state.iso / 10000) + (f.gry > 0 ? 0.05 : 0), 0.5);
+            document.getElementById('grain-layer').style.opacity = grainOpacity;
+
+            // 4. 應用暗角 (Vignette)
+            const vigEl = document.getElementById('vignette-layer');
+            if (state.vig > 0) {
+                vigEl.style.background = `radial-gradient(circle, transparent 50%, rgba(0,0,0,${state.vig/80}) 120%)`;
+            } else {
+                vigEl.style.background = 'none';
+            }
+        }
+
+        function toggleParams() {
+            const paramsPanel = document.getElementById('params-panel');
+            const filtersPanel = document.getElementById('filters-panel');
+            
+            if (paramsPanel.classList.contains('hidden')) {
+                paramsPanel.classList.remove('hidden');
+                filtersPanel.classList.add('hidden');
+            } else {
+                paramsPanel.classList.add('hidden');
+                filtersPanel.classList.remove('hidden');
+            }
+        }
+
+        function resetAll() {
+            state.iso = 400;
+            state.exp = 0;
+            state.vig = 0;
+            state.con = 0;
+            
+            // Reset Inputs
+            document.getElementById('input-iso').value = 400;
+            document.getElementById('input-exp').value = 0;
+            document.getElementById('input-vig').value = 0;
+            document.getElementById('input-con').value = 0;
+            
+            updateState('iso', 400); // Trigger updates
+            updateState('exp', 0);
+            updateView();
+        }
+
+        // --- 導出功能 ---
+        function exportImage() {
+            if (!state.image) return;
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                
+                // 1. 繪製並應用濾鏡
+                const f = FILTERS[state.filterIndex].style;
+                const isoGain = Math.log2(state.iso / 400) * 5;
+                const expGain = state.exp * 10;
+                const finalBri = f.bri + isoGain + expGain;
+                const finalCon = f.con + state.con;
+                
+                ctx.filter = `brightness(${finalBri}%) contrast(${finalCon}%) saturate(${f.sat}%) sepia(${f.sep}%) grayscale(${f.gry}%) hue-rotate(${f.hue}deg)`;
+                ctx.drawImage(img, 0, 0);
+                ctx.filter = 'none';
+
+                // 2. 繪製暗角
+                if (state.vig > 0) {
+                    const gradient = ctx.createRadialGradient(
+                        canvas.width/2, canvas.height/2, canvas.width*0.3,
+                        canvas.width/2, canvas.height/2, canvas.width*0.9
+                    );
+                    gradient.addColorStop(0, "rgba(0,0,0,0)");
+                    gradient.addColorStop(1, `rgba(0,0,0,${state.vig/100})`);
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+
+                // 下載
+                const link = document.createElement('a');
+                link.download = `LENS_OS_${FILTERS[state.filterIndex].name}_${Date.now()}.jpg`;
+                link.href = canvas.toDataURL('image/jpeg', 0.9);
+                link.click();
+            };
+            img.src = state.image;
+        }
+    </script>
+</body>
+</html>
